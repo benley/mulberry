@@ -171,12 +171,12 @@ func (d *Daemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mpdata := mpbuf.Bytes()
 
 	w.Header().Set("Content-Type", "multipart/signed")
-	w.Header().Set("ETag", etagFor(mpdata))
+	w.Header().Set("ETag", weakETagFor(yamldata))
 	http.ServeContent(w, r, "", when, bytes.NewReader(mpdata))
 }
 
-func etagFor(data []byte) string {
+func weakETagFor(data []byte) string {
 	hash := sha1.Sum(data)
 	b64hash := base64.StdEncoding.EncodeToString(hash[:])
-	return "\"" + b64hash + "\""
+	return "W/\"" + b64hash + "\""
 }
