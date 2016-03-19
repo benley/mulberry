@@ -52,3 +52,11 @@ func Load(path string) (*Config, error) {
 	}
 	return cfg, nil
 }
+
+func (cfg *Config) Save() []byte {
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
