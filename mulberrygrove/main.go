@@ -44,17 +44,7 @@ func main() {
 	}
 
 	// Ignore SIGHUP
-	hupch := make(chan os.Signal)
-	signal.Notify(hupch, syscall.SIGHUP)
-	defer signal.Stop(hupch)
-	go (func() {
-		for {
-			sig := <-hupch
-			if sig == nil {
-				break
-			}
-		}
-	})()
+	signal.Ignore(syscall.SIGHUP)
 
 	// Shut down gracefully on SIGINT or SIGTERM
 	sigch := make(chan os.Signal)
