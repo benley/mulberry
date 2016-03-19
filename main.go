@@ -23,17 +23,15 @@ func main() {
 
 	hupch := make(chan os.Signal)
 	signal.Notify(hupch, syscall.SIGHUP)
+	defer signal.Stop(hupch)
 	go (func() {
-	Outer:
 		for {
-			select {
-			case sig := <-hupch:
-				if sig == nil {
-					break Outer
-				}
-				log.Printf("info: got signal %v", sig)
-				d.Reload()
+			sig := <-hupch
+			if sig == nil {
+				break
 			}
+			log.Printf("info: got signal %v", sig)
+			d.Reload()
 		}
 	})()
 
