@@ -9,34 +9,34 @@ import (
 )
 
 type Port struct {
-	L net.Listener
-	C config.Address
-	S []*SocketPair
-	W sync.WaitGroup
+	listener net.Listener
+	connect config.Address
+	socketpairs []*SocketPair
+	wg sync.WaitGroup
 }
 
 func (p *Port) Start(l net.Listener, c config.Address) {
-	p.L = l
-	p.C = c
-	p.W = sync.WaitGroup{}
-	p.W.Add(1)
+	p.listener = l
+	p.connect = c
+	p.wg = sync.WaitGroup{}
+	p.wg.Add(1)
 	go p.EventLoop()
 }
 
 func (p *Port) Stop() {
-	closeSocket("listener", p.L)
-	for _, s := range p.S {
+	closeSocket("listener", p.listener)
+	for _, s := range p.socketpairs {
 		s.Stop()
 	}
 }
 
 func (p *Port) Await() {
-	p.W.Wait()
+	p.wg.Wait()
 }
 
 func (p *Port) EventLoop() {
 	for {
-		x, err := p.L.Accept()
+		x, err := p.listener.Accept()
 		if err != nil {
 			operr, ok := err.(*net.OpError)
 			if !ok || operr.Op != "accept" || operr.Err.Error() != "use of closed network connection" {
@@ -45,30 +45,30 @@ func (p *Port) EventLoop() {
 			break
 		}
 
-		y, err := net.Dial(p.C.Net, p.C.Addr)
+		y, err := net.Dial(p.connect.Net, p.connect.Addr)
 		if err != nil {
 			log.Printf("error: failed to dial: %v", err)
 			closeSocket("origin", x)
 			continue
 		}
 
-		newS := make([]*SocketPair, 0, len(p.S)+1)
+		newS := make([]*SocketPair, 0, len(p.socketpairs)+1)
 		s := new(SocketPair)
 		s.Start(x, y)
 		newS = append(newS, s)
-		for _, s := range p.S {
+		for _, s := range p.socketpairs {
 			if s.IsRunning() {
 				newS = append(newS, s)
 			}
 		}
 
-		p.S = newS
+		p.socketpairs = newS
 	}
 
 	p.Stop()
-	for _, s := range p.S {
+	for _, s := range p.socketpairs {
 		s.Stop()
 		s.Await()
 	}
-	p.W.Done()
+	p.wg.Done()
 }

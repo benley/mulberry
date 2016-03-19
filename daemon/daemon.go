@@ -8,29 +8,29 @@ import (
 )
 
 type Daemon struct {
-	F        string
-	C        *config.Config
-	P        map[string]*Port
-	ReloadCh chan struct{}
-	StopCh   chan struct{}
+	configPath string
+	cfg        *config.Config
+	ports      map[string]*Port
+	reloadch   chan struct{}
+	stopch     chan struct{}
 }
 
 func New(configFile string) *Daemon {
 	return &Daemon{
-		F:        configFile,
-		C:        nil,
-		P:        make(map[string]*Port),
-		ReloadCh: make(chan struct{}),
-		StopCh:   make(chan struct{}),
+		configPath: configFile,
+		cfg:        nil,
+		ports:      make(map[string]*Port),
+		reloadch:   make(chan struct{}),
+		stopch:     make(chan struct{}),
 	}
 }
 
 func (d *Daemon) Reload() {
-	d.ReloadCh <- struct{}{}
+	d.reloadch <- struct{}{}
 }
 
 func (d *Daemon) Stop() {
-	close(d.StopCh)
+	close(d.stopch)
 }
 
 func (d *Daemon) Loop() {
@@ -38,13 +38,13 @@ func (d *Daemon) Loop() {
 Outer:
 	for {
 		select {
-		case <-d.ReloadCh:
+		case <-d.reloadch:
 			d.reloadImpl()
-		case <-d.StopCh:
+		case <-d.stopch:
 			break Outer
 		}
 	}
-	for _, p := range d.P {
+	for _, p := range d.ports {
 		p.Stop()
 		p.Await()
 	}
@@ -52,7 +52,7 @@ Outer:
 
 func (d *Daemon) reloadImpl() {
 	log.Printf("info: reloading config")
-	cfg, err := config.Load(d.F)
+	cfg, err := config.Load(d.configPath)
 	if err != nil {
 		log.Printf("error: %v", err)
 		return
@@ -62,8 +62,8 @@ func (d *Daemon) reloadImpl() {
 	for _, port := range cfg.Ports {
 		name := port.Listen.String()
 		seen[name] = struct{}{}
-		if p, found := d.P[name]; found {
-			if port.Connect.String() != p.C.String() {
+		if p, found := d.ports[name]; found {
+			if port.Connect.String() != p.connect.String() {
 				p.Stop()
 				p.Await()
 				l, err := net.Listen(port.Listen.Net, port.Listen.Addr)
@@ -82,10 +82,10 @@ func (d *Daemon) reloadImpl() {
 			}
 			p = new(Port)
 			p.Start(l, port.Connect)
-			d.P[name] = p
+			d.ports[name] = p
 		}
 	}
-	for name, p := range d.P {
+	for name, p := range d.ports {
 		if _, found := seen[name]; !found {
 			p.Stop()
 			p.Await()
@@ -93,7 +93,7 @@ func (d *Daemon) reloadImpl() {
 		}
 	}
 	for _, name := range remove {
-		delete(d.P, name)
+		delete(d.ports, name)
 	}
-	d.C = cfg
+	d.cfg = cfg
 }

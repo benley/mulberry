@@ -8,38 +8,38 @@ import (
 )
 
 type SocketPair struct {
-	X net.Conn
-	Y net.Conn
-	W sync.WaitGroup
+	x  net.Conn
+	y  net.Conn
+	wg sync.WaitGroup
 }
 
 func (s *SocketPair) Start(x, y net.Conn) {
-	s.X = x
-	s.Y = y
-	s.W = sync.WaitGroup{}
-	s.W.Add(3)
+	s.x = x
+	s.y = y
+	s.wg = sync.WaitGroup{}
+	s.wg.Add(3)
 	go s.EventLoop()
 }
 
 func (s *SocketPair) Stop() {
-	closeSocket("origin", s.X)
-	closeSocket("destination", s.Y)
+	closeSocket("origin", s.x)
+	closeSocket("destination", s.y)
 }
 
 func (s *SocketPair) IsRunning() bool {
-	_, err := s.X.Write(nil)
+	_, err := s.x.Write(nil)
 	return err == nil
 }
 
 func (s *SocketPair) Await() {
-	s.W.Wait()
+	s.wg.Wait()
 }
 
 func (s *SocketPair) EventLoop() {
-	go loopOneDirection(s.X, s.Y, &s.W)
-	loopOneDirection(s.Y, s.X, &s.W)
+	go loopOneDirection(s.x, s.y, &s.wg)
+	loopOneDirection(s.y, s.x, &s.wg)
 	s.Stop()
-	s.W.Done()
+	s.wg.Done()
 }
 
 func loopOneDirection(in net.Conn, out net.Conn, w *sync.WaitGroup) {
