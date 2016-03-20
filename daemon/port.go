@@ -20,7 +20,7 @@ func (p *Port) Start(l net.Listener, c config.Address) {
 	p.connect = c
 	p.wg = sync.WaitGroup{}
 	p.wg.Add(1)
-	go p.EventLoop()
+	go p.loop()
 }
 
 func (p *Port) Stop() {
@@ -34,7 +34,7 @@ func (p *Port) Await() {
 	p.wg.Wait()
 }
 
-func (p *Port) EventLoop() {
+func (p *Port) loop() {
 	for {
 		x, err := p.listener.Accept()
 		if err != nil {

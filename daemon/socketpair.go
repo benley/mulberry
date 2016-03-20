@@ -18,7 +18,7 @@ func (s *SocketPair) Start(x, y net.Conn) {
 	s.y = y
 	s.wg = sync.WaitGroup{}
 	s.wg.Add(3)
-	go s.EventLoop()
+	go s.loop()
 }
 
 func (s *SocketPair) Stop() {
@@ -35,7 +35,7 @@ func (s *SocketPair) Await() {
 	s.wg.Wait()
 }
 
-func (s *SocketPair) EventLoop() {
+func (s *SocketPair) loop() {
 	go loopOneDirection(s.x, s.y, &s.wg)
 	loopOneDirection(s.y, s.x, &s.wg)
 	s.Stop()
