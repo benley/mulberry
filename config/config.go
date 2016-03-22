@@ -18,6 +18,7 @@ func (a Address) String() string {
 }
 
 type Port struct {
+	Name    string
 	Listen  Address `yaml:",flow"`
 	Connect Address `yaml:",flow"`
 }
@@ -48,6 +49,9 @@ func Load(path string) (*Config, error) {
 		}
 		if p.Connect.Net == "" {
 			p.Connect.Net = "tcp"
+		}
+		if p.Name == "" {
+			p.Name = p.Listen.String()
 		}
 	}
 	return cfg, nil

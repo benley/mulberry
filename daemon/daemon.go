@@ -13,13 +13,19 @@ import (
 var (
 	configErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "mulberry",
-		Name: "config_errors_total",
-		Help: "Number of failed attempts to read the Mulberry configuration from disk.",
+		Name:      "config_errors_total",
+		Help:      "Number of failed attempts to read the Mulberry configuration from disk.",
 	})
+	restartsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "mulberry",
+		Name:      "restarts_total",
+		Help:      "Number of times each port has been (re)initialized, killing any existing connections.",
+	}, []string{"port"})
 )
 
 func init() {
 	prometheus.MustRegister(configErrorsTotal)
+	prometheus.MustRegister(restartsTotal)
 }
 
 type Daemon struct {
@@ -103,7 +109,8 @@ func (d *Daemon) Apply(cfg *config.Config) {
 					remove = append(remove, name)
 					continue
 				}
-				p.Start(l, port.Connect)
+				p.Start(port.Name, l, port.Connect)
+				restartsTotal.WithLabelValues(port.Name).Inc()
 			}
 		} else {
 			l, err := net.Listen(port.Listen.Net, port.Listen.Addr)
@@ -112,7 +119,8 @@ func (d *Daemon) Apply(cfg *config.Config) {
 				continue
 			}
 			p = new(Port)
-			p.Start(l, port.Connect)
+			p.Start(port.Name, l, port.Connect)
+			restartsTotal.WithLabelValues(port.Name).Inc()
 			d.ports[name] = p
 		}
 	}

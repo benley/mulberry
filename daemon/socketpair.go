@@ -5,15 +5,31 @@ import (
 	"log"
 	"net"
 	"sync"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-type SocketPair struct {
-	x  net.Conn
-	y  net.Conn
-	wg sync.WaitGroup
+var (
+	liveConnectionsTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "mulberry",
+		Name:      "live_connections_total",
+		Help:      "Number of active connections through the proxy for each port.",
+	}, []string{"port"})
+)
+
+func init() {
+	prometheus.MustRegister(liveConnectionsTotal)
 }
 
-func (s *SocketPair) Start(x, y net.Conn) {
+type SocketPair struct {
+	port string
+	x    net.Conn
+	y    net.Conn
+	wg   sync.WaitGroup
+}
+
+func (s *SocketPair) Start(portName string, x, y net.Conn) {
+	s.port = portName
 	s.x = x
 	s.y = y
 	s.wg = sync.WaitGroup{}
@@ -36,9 +52,11 @@ func (s *SocketPair) Await() {
 }
 
 func (s *SocketPair) loop() {
+	liveConnectionsTotal.WithLabelValues(s.port).Inc()
 	go loopOneDirection(s.x, s.y, &s.wg)
 	loopOneDirection(s.y, s.x, &s.wg)
 	s.Stop()
+	liveConnectionsTotal.WithLabelValues(s.port).Dec()
 	s.wg.Done()
 }
 

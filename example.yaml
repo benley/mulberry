@@ -1,4 +1,5 @@
 ---
 ports:
-  - listen: {addr: ":4417"}
+  - name: mysql
+    listen: {addr: ":4417"}
     connect: {addr: "localhost:3306"}
