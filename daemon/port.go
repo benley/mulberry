@@ -9,10 +9,10 @@ import (
 )
 
 type Port struct {
-	listener net.Listener
-	connect config.Address
+	listener    net.Listener
+	connect     config.Address
 	socketpairs []*SocketPair
-	wg sync.WaitGroup
+	wg          sync.WaitGroup
 }
 
 func (p *Port) Start(l net.Listener, c config.Address) {
