@@ -40,9 +40,9 @@ func Load(path string) (*Config, error) {
 	return Parse(raw)
 }
 
-func (cfg *Config) Parse(raw []byte) (*Config, error) {
+func Parse(raw []byte) (*Config, error) {
 	cfg := &Config{}
-	err = yaml.Unmarshal(raw, cfg)
+	err := yaml.Unmarshal(raw, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %v", err)
 	}
