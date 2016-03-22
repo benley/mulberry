@@ -83,7 +83,7 @@ Outer:
 }
 
 func (d *Daemon) reloadImpl() {
-	log.Printf("info: reloading config")
+	log.Printf("info: reloading config from disk")
 	cfg, err := config.Load(d.configPath)
 	if err != nil {
 		log.Printf("error: %v", err)
