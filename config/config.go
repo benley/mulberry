@@ -37,6 +37,10 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %v", err)
 	}
+	return Parse(raw)
+}
+
+func (cfg *Config) Parse(raw []byte) (*Config, error) {
 	cfg := &Config{}
 	err = yaml.Unmarshal(raw, cfg)
 	if err != nil {
