@@ -84,10 +84,10 @@ func (d *Daemon) reloadImpl() {
 		configErrorsTotal.Inc()
 		return
 	}
-	d.apply(cfg)
+	d.Apply(cfg)
 }
 
-func (d *Daemon) apply(cfg *config.Config) {
+func (d *Daemon) Apply(cfg *config.Config) {
 	seen := make(map[string]struct{})
 	var remove []string
 	for _, port := range cfg.Ports {
