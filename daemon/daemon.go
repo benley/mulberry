@@ -5,8 +5,22 @@ import (
 	"net"
 	"sync"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/chronos-tachyon/mulberry/config"
 )
+
+var (
+	configErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "mulberry",
+		Name: "config_errors_total",
+		Help: "Number of failed attempts to read the Mulberry configuration from disk.",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(configErrorsTotal)
+}
 
 type Daemon struct {
 	configPath string
@@ -67,6 +81,7 @@ func (d *Daemon) reloadImpl() {
 	cfg, err := config.Load(d.configPath)
 	if err != nil {
 		log.Printf("error: %v", err)
+		configErrorsTotal.Inc()
 		return
 	}
 	d.apply(cfg)
