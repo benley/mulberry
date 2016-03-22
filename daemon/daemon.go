@@ -57,6 +57,10 @@ func (d *Daemon) reloadImpl() {
 		log.Printf("error: %v", err)
 		return
 	}
+	d.apply(cfg)
+}
+
+func (d *Daemon) apply(cfg *config.Config) {
 	seen := make(map[string]struct{})
 	var remove []string
 	for _, port := range cfg.Ports {
