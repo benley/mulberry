@@ -3,6 +3,7 @@ package daemon
 import (
 	"log"
 	"net"
+	"sync"
 
 	"github.com/chronos-tachyon/mulberry/config"
 )
@@ -13,6 +14,7 @@ type Daemon struct {
 	ports      map[string]*Port
 	reloadch   chan struct{}
 	stopch     chan struct{}
+	wg         sync.WaitGroup
 }
 
 func New(configFile string) *Daemon {
@@ -25,6 +27,11 @@ func New(configFile string) *Daemon {
 	}
 }
 
+func (d *Daemon) Start() {
+	d.wg.Add(1)
+	go d.loop()
+}
+
 func (d *Daemon) Reload() {
 	d.reloadch <- struct{}{}
 }
@@ -33,7 +40,11 @@ func (d *Daemon) Stop() {
 	close(d.stopch)
 }
 
-func (d *Daemon) Loop() {
+func (d *Daemon) Await() {
+	d.wg.Wait()
+}
+
+func (d *Daemon) loop() {
 	d.reloadImpl()
 Outer:
 	for {
@@ -48,6 +59,7 @@ Outer:
 		p.Stop()
 		p.Await()
 	}
+	d.wg.Done()
 }
 
 func (d *Daemon) reloadImpl() {

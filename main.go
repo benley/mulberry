@@ -46,6 +46,7 @@ func main() {
 	})()
 
 	log.Printf("info: looping")
-	d.Loop()
+	d.Start()
+	d.Await()
 	log.Printf("info: graceful shutdown")
 }
