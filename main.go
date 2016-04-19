@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -11,112 +10,64 @@ import (
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/crypto/openpgp"
 
 	"github.com/chronos-tachyon/mulberry/config"
 	"github.com/chronos-tachyon/mulberry/daemon"
 )
 
 var (
-	configFile  = flag.String("config", "", "path to the initial YAML configuration file")
-	keyringFile = flag.String("keyring", "", "path to the GPG public keyring used to verify new configs")
-	listenNet   = flag.String("net", "tcp", "protocol to listen on")
-	listenAddr  = flag.String("addr", ":8643", "address to listen on")
+	sourceFlag     = flag.String("source", "", "where to get a config from; one of: file, zookeeper")
+	filePathFlag   = flag.String("file_path", "", "filesystem path to the YAML configuration file")
+	zkServersFlag  = flag.String("zookeeper_servers", "", "the ZooKeeper cluster containing the config file; default $ZOOKEEPER_SERVERS")
+	zkConfigFlag   = flag.String("zookeeper_config", "/mulberry/config", "ZooKeeper path to the YAML configuration file")
+	listenNetFlag  = flag.String("net", "tcp", "protocol for HTTP metrics server to listen on")
+	listenAddrFlag = flag.String("addr", ":8643", "address for HTTP metrics server to listen on")
 )
 
 func main() {
 	flag.Parse()
-	if *configFile == "" {
-		log.Fatalf("fatal: missing required flag: -config")
+	if *sourceFlag == "" {
+		log.Fatalf("fatal: missing required flag: -source=")
 	}
 
-	var keyring openpgp.EntityList
-	if *keyringFile != "" {
-		f, err := os.Open(*keyringFile)
-		if err != nil {
-			log.Fatalf("fatal: failed to open -keyring: %v", err)
+	var source config.Source
+	switch *sourceFlag {
+	case "file":
+		if *filePathFlag == "" {
+			log.Fatalf("fatal: missing required flag: -file_path=")
 		}
-		keyring, err = openpgp.ReadKeyRing(f)
-		f.Close()
-		if err != nil {
-			log.Fatalf("fatal: failed to read -keyring: %v", err)
-		}
+		source = config.NewFileSource(*filePathFlag)
+	case "zookeeper":
+		signal.Ignore(syscall.SIGHUP)
+		source = config.NewZooKeeperSource(*zkServersFlag, *zkConfigFlag)
+	default:
+		log.Fatalf("fatal: unknown flag value: -source=%q", *sourceFlag)
 	}
 
-	l, err := net.Listen(*listenNet, *listenAddr)
+	l, err := net.Listen(*listenNetFlag, *listenAddrFlag)
 	if err != nil {
 		log.Fatalf("fatal: failed to listen: %v", err)
 	}
 
-	d := daemon.New(*configFile)
-
-	hupch := make(chan os.Signal)
-	signal.Notify(hupch, syscall.SIGHUP)
-	defer signal.Stop(hupch)
-	go (func() {
-		for {
-			sig := <-hupch
-			if sig == nil {
-				break
-			}
-			log.Printf("info: got signal %v", sig)
-			d.Reload()
-		}
-	})()
-
-	sigch := make(chan os.Signal)
+	sigch := make(chan os.Signal, 1)
 	signal.Notify(sigch, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigch)
 	go (func() {
 		sig := <-sigch
 		log.Printf("info: got signal %v", sig)
 		l.Close()
-		d.Stop()
-		close(hupch)
 	})()
 
-	applyFunc := func(cfg *config.Config) error {
-		f, err := os.OpenFile(*configFile+".NEW", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-		if err != nil {
-			return fmt.Errorf("failed to rewrite -config: %v", err)
-		}
-		_, err = f.Write(cfg.Save())
-		if err != nil {
-			f.Close()
-			return fmt.Errorf("failed to rewrite -config: %v", err)
-		}
-		err = f.Close()
-		if err != nil {
-			return fmt.Errorf("failed to rewrite -config: %v", err)
-		}
-		os.Remove(*configFile+"~")
-		err = os.Rename(*configFile, *configFile+"~")
-		if err != nil {
-			linkerr := err.(*os.LinkError)
-			errno, ok := linkerr.Err.(syscall.Errno)
-			if !ok || errno != syscall.ENOENT {
-				return fmt.Errorf("failed to backup -config: %v", err)
-			}
-		}
-		err = os.Rename(*configFile+".NEW", *configFile)
-		if err != nil {
-			os.Rename(*configFile+"~", *configFile)
-			return fmt.Errorf("failed to replace -config: %v", err)
-		}
-		d.Apply(cfg)
-		return nil
-	}
-
 	log.Printf("info: serving on %s", l.Addr())
-	d.Start()
 	http.Handle("/metrics", prometheus.Handler())
-	http.Handle("/upload", &UploadHandler{keyring, applyFunc})
+	d := daemon.New(source)
+	d.Start()
 	if err := http.Serve(l, nil); err != nil {
 		operr, ok := err.(*net.OpError)
 		if !ok || operr.Op != "accept" || operr.Err.Error() != "use of closed network connection" {
 			log.Fatalf("fatal: %v", err)
 		}
 	}
-	d.Await()
+	d.Stop()
 	log.Printf("info: graceful shutdown")
 }

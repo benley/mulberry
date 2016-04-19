@@ -5,66 +5,53 @@ import (
 	"net"
 	"sync"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/chronos-tachyon/mulberry/config"
 )
 
-var (
-	acceptsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "mulberry",
-		Name:      "accepts_total",
-		Help:      "Number of times each port has accepted a connection.",
-	}, []string{"port"})
-	connectsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "mulberry",
-		Name:      "connects_total",
-		Help:      "Number of times each port has successfully dialed a new connection.",
-	}, []string{"port"})
-	dialErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "mulberry",
-		Name:      "dial_errors_total",
-		Help:      "Number of times each port has failed to dial a new connection.",
-	}, []string{"port"})
-)
-
-func init() {
-	prometheus.MustRegister(acceptsTotal)
-	prometheus.MustRegister(connectsTotal)
-	prometheus.MustRegister(dialErrorsTotal)
+type listenport struct {
+	wg sync.WaitGroup
+	mu sync.Mutex
+	pn string
+	l  net.Listener
+	t  config.Address
+	sp []*socketpair
 }
 
-type Port struct {
-	name        string
-	listener    net.Listener
-	connect     config.Address
-	socketpairs []*SocketPair
-	wg          sync.WaitGroup
-}
-
-func (p *Port) Start(portName string, l net.Listener, c config.Address) {
-	p.name = portName
-	p.listener = l
-	p.connect = c
-	p.wg = sync.WaitGroup{}
+func newListenPort(portName string, l net.Listener, c config.Address) *listenport {
+	p := &listenport{
+		pn: portName,
+		l:  l,
+		t:  c,
+	}
 	p.wg.Add(1)
 	go p.loop()
+	return p
 }
 
-func (p *Port) Stop() {
-	closeSocket("listener", p.listener)
-	for _, s := range p.socketpairs {
-		s.Stop()
+func (p *listenport) Alter(c config.Address) {
+	p.mu.Lock()
+	splist := p.sp
+	p.sp = nil
+	p.t = c
+	p.mu.Unlock()
+	for _, sp := range splist {
+		sp.Close()
 	}
 }
 
-func (p *Port) Await() {
+func (p *listenport) Close() error {
+	withLock(&p.mu, func() {
+		closeSocket("listener", p.l)
+	})
 	p.wg.Wait()
+	return nil
 }
 
-func (p *Port) loop() {
+func (p *listenport) loop() {
+	defer p.wg.Done()
+
 	for {
-		x, err := p.listener.Accept()
+		x, err := p.l.Accept()
 		if err != nil {
 			operr, ok := err.(*net.OpError)
 			if !ok || operr.Op != "accept" || operr.Err.Error() != "use of closed network connection" {
@@ -72,34 +59,29 @@ func (p *Port) loop() {
 			}
 			break
 		}
-		acceptsTotal.WithLabelValues(p.name).Inc()
+		acceptsTotal.WithLabelValues(p.pn).Inc()
 
-		y, err := net.Dial(p.connect.Net, p.connect.Addr)
-		if err != nil {
-			log.Printf("error: failed to dial: %v", err)
-			closeSocket("origin", x)
-			dialErrorsTotal.WithLabelValues(p.name).Inc()
-			continue
-		}
-		connectsTotal.WithLabelValues(p.name).Inc()
-
-		newS := make([]*SocketPair, 0, len(p.socketpairs)+1)
-		s := new(SocketPair)
-		s.Start(p.name, x, y)
-		newS = append(newS, s)
-		for _, s := range p.socketpairs {
-			if s.IsRunning() {
-				newS = append(newS, s)
+		withLock(&p.mu, func() {
+			sp := newSocketPair(p.pn, x, p.t)
+			spnewlist := make([]*socketpair, 0, len(p.sp)+1)
+			spnewlist = append(spnewlist, sp)
+			for _, sp := range p.sp {
+				if sp.IsRunning() {
+					spnewlist = append(spnewlist, sp)
+				}
 			}
-		}
-
-		p.socketpairs = newS
+			p.sp = spnewlist
+		})
 	}
 
-	p.Stop()
-	for _, s := range p.socketpairs {
-		s.Stop()
-		s.Await()
+	closeSocket("listener", p.l)
+	p.mu.Lock()
+	splist := p.sp
+	p.l = nil
+	p.sp = nil
+	p.mu.Unlock()
+
+	for _, sp := range splist {
+		sp.Close()
 	}
-	p.wg.Done()
 }

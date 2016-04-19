@@ -6,61 +6,87 @@ import (
 	"net"
 	"sync"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/chronos-tachyon/mulberry/config"
 )
 
-var (
-	liveConnectionsTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "mulberry",
-		Name:      "live_connections_total",
-		Help:      "Number of active connections through the proxy for each port.",
-	}, []string{"port"})
-)
-
-func init() {
-	prometheus.MustRegister(liveConnectionsTotal)
+type socketpair struct {
+	wg sync.WaitGroup
+	mu sync.Mutex
+	pn string
+	t  config.Address
+	x  net.Conn
+	y  net.Conn
+	st bool
 }
 
-type SocketPair struct {
-	port string
-	x    net.Conn
-	y    net.Conn
-	wg   sync.WaitGroup
+func newSocketPair(portName string, x net.Conn, target config.Address) *socketpair {
+	sp := &socketpair{
+		pn: portName,
+		t:  target,
+		x:  x,
+	}
+	sp.wg.Add(1)
+	go sp.loop()
+	return sp
 }
 
-func (s *SocketPair) Start(portName string, x, y net.Conn) {
-	s.port = portName
-	s.x = x
-	s.y = y
-	s.wg = sync.WaitGroup{}
-	s.wg.Add(3)
-	go s.loop()
-}
-
-func (s *SocketPair) Stop() {
-	closeSocket("origin", s.x)
-	closeSocket("destination", s.y)
-}
-
-func (s *SocketPair) IsRunning() bool {
-	_, err := s.x.Write(nil)
+func (sp *socketpair) IsRunning() bool {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.st {
+		return false
+	}
+	_, err := sp.x.Write(nil)
 	return err == nil
 }
 
-func (s *SocketPair) Await() {
-	s.wg.Wait()
+func (sp *socketpair) Close() error {
+	withLock(&sp.mu, func() {
+		sp.st = true
+		closeSocket("origin", sp.x)
+		closeSocket("destination", sp.y)
+	})
+	sp.wg.Wait()
+	return nil
 }
 
-func (s *SocketPair) loop() {
-	liveConnectionsTotal.WithLabelValues(s.port).Inc()
-	go loopOneDirection(s.x, s.y, &s.wg)
-	loopOneDirection(s.y, s.x, &s.wg)
-	s.Stop()
-	liveConnectionsTotal.WithLabelValues(s.port).Dec()
-	s.wg.Done()
+func (sp *socketpair) loop() {
+	defer sp.wg.Done()
+
+	y, err := net.Dial(sp.t.Net, sp.t.Addr)
+	if err != nil {
+		log.Printf("error: failed to dial: %v", err)
+		closeSocket("origin", sp.x)
+		dialErrorsTotal.WithLabelValues(sp.pn).Inc()
+		return
+	}
+	connectsTotal.WithLabelValues(sp.pn).Inc()
+
+	var st bool
+	withLock(&sp.mu, func() {
+		sp.y = y
+		if sp.st {
+			st = true
+			closeSocket("origin", sp.x)
+			closeSocket("destination", sp.y)
+		}
+	})
+	if st {
+		return
+	}
+
+	liveConnectionsTotal.WithLabelValues(sp.pn).Inc()
+	sp.wg.Add(2)
+	go loopOneDirection(sp.x, sp.y, &sp.wg)
+	loopOneDirection(sp.y, sp.x, &sp.wg)
+	closeSocket("origin", sp.x)
+	closeSocket("destination", sp.y)
+	liveConnectionsTotal.WithLabelValues(sp.pn).Dec()
 }
 
 func loopOneDirection(in net.Conn, out net.Conn, w *sync.WaitGroup) {
+	defer w.Done()
+
 	b := make([]byte, 65536)
 	for {
 		n, err := in.Read(b)
@@ -82,5 +108,4 @@ func loopOneDirection(in net.Conn, out net.Conn, w *sync.WaitGroup) {
 			break
 		}
 	}
-	w.Done()
 }

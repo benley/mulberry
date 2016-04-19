@@ -5,134 +5,94 @@ import (
 	"net"
 	"sync"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/chronos-tachyon/mulberry/config"
 )
 
-var (
-	configErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "mulberry",
-		Name:      "config_errors_total",
-		Help:      "Number of failed attempts to read the Mulberry configuration from disk.",
-	})
-	restartsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "mulberry",
-		Name:      "restarts_total",
-		Help:      "Number of times each port has been (re)initialized, killing any existing connections.",
-	}, []string{"port"})
-)
-
-func init() {
-	prometheus.MustRegister(configErrorsTotal)
-	prometheus.MustRegister(restartsTotal)
-}
-
 type Daemon struct {
-	configPath string
-	cfg        *config.Config
-	ports      map[string]*Port
-	reloadch   chan struct{}
-	stopch     chan struct{}
-	wg         sync.WaitGroup
+	cfgsrc     config.Source
+	eventch chan event
+	stopch  chan struct{}
+	wg      sync.WaitGroup
 }
 
-func New(configFile string) *Daemon {
-	return &Daemon{
-		configPath: configFile,
-		cfg:        nil,
-		ports:      make(map[string]*Port),
-		reloadch:   make(chan struct{}),
-		stopch:     make(chan struct{}),
-	}
+type event struct {
+	cfg *config.Config
+	err error
+}
+
+func New(configSource config.Source) *Daemon {
+	d := &Daemon{cfgsrc: configSource}
+	configSource.Watch(d.callback)
+	return d
 }
 
 func (d *Daemon) Start() {
+	d.eventch = make(chan event)
+	d.stopch = make(chan struct{})
 	d.wg.Add(1)
 	go d.loop()
-}
-
-func (d *Daemon) Reload() {
-	d.reloadch <- struct{}{}
+	d.cfgsrc.Start()
 }
 
 func (d *Daemon) Stop() {
+	d.cfgsrc.Stop()
 	close(d.stopch)
+	d.wg.Wait()
+	close(d.eventch)
+	d.eventch = nil
+	d.stopch = nil
 }
 
-func (d *Daemon) Await() {
-	d.wg.Wait()
+func (d *Daemon) callback(cfg *config.Config, err error) {
+	d.eventch <- event{cfg, err}
 }
 
 func (d *Daemon) loop() {
-	d.reloadImpl()
+	ports := make(map[string]*listenport)
 Outer:
 	for {
 		select {
-		case <-d.reloadch:
-			d.reloadImpl()
 		case <-d.stopch:
 			break Outer
+		case ev := <-d.eventch:
+			if ev.err != nil {
+				log.Printf("mulberry: %v", ev.err)
+				break
+			}
+			apply(ports, ev.cfg)
 		}
 	}
-	for _, p := range d.ports {
-		p.Stop()
-		p.Await()
+	for _, p := range ports {
+		p.Close()
 	}
 	d.wg.Done()
 }
 
-func (d *Daemon) reloadImpl() {
-	log.Printf("info: reloading config from disk")
-	cfg, err := config.Load(d.configPath)
-	if err != nil {
-		log.Printf("error: %v", err)
-		configErrorsTotal.Inc()
-		return
-	}
-	d.Apply(cfg)
-}
-
-func (d *Daemon) Apply(cfg *config.Config) {
+func apply(ports map[string]*listenport, cfg *config.Config) {
 	seen := make(map[string]struct{})
-	var remove []string
 	for _, port := range cfg.Ports {
 		name := port.Listen.String()
 		seen[name] = struct{}{}
-		if p, found := d.ports[name]; found {
-			if port.Connect.String() != p.connect.String() {
-				p.Stop()
-				p.Await()
-				l, err := net.Listen(port.Listen.Net, port.Listen.Addr)
-				if err != nil {
-					log.Printf("error: failed to listen: %v", err)
-					remove = append(remove, name)
-					continue
-				}
-				p.Start(port.Name, l, port.Connect)
-				restartsTotal.WithLabelValues(port.Name).Inc()
+		p, found := ports[name]
+		if found {
+			if port.Connect.String() == p.t.String() {
+				continue
 			}
+			p.Alter(port.Connect)
 		} else {
 			l, err := net.Listen(port.Listen.Net, port.Listen.Addr)
 			if err != nil {
-				log.Printf("error: failed to listen: %v", err)
+				log.Printf("mulberry: failed to listen: %v", err)
 				continue
 			}
-			p = new(Port)
-			p.Start(port.Name, l, port.Connect)
-			restartsTotal.WithLabelValues(port.Name).Inc()
-			d.ports[name] = p
+			ports[name] = newListenPort(port.Name, l, port.Connect)
 		}
+		restartsTotal.WithLabelValues(port.Name).Inc()
 	}
-	for name, p := range d.ports {
+	for name, p := range ports {
 		if _, found := seen[name]; !found {
-			p.Stop()
-			p.Await()
-			remove = append(remove, name)
+			delete(ports, name)
+			p.Close()
 		}
 	}
-	for _, name := range remove {
-		delete(d.ports, name)
-	}
-	d.cfg = cfg
 }
