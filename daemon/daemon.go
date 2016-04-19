@@ -9,7 +9,7 @@ import (
 )
 
 type Daemon struct {
-	cfgsrc     config.Source
+	cfgsrc  config.Source
 	eventch chan event
 	stopch  chan struct{}
 	wg      sync.WaitGroup
@@ -21,26 +21,22 @@ type event struct {
 }
 
 func New(configSource config.Source) *Daemon {
-	d := &Daemon{cfgsrc: configSource}
+	d := &Daemon{
+		cfgsrc:  configSource,
+		eventch: make(chan event),
+		stopch:  make(chan struct{}),
+	}
+	d.wg.Add(1)
+	go d.loop()
 	configSource.Watch(d.callback)
 	return d
 }
 
-func (d *Daemon) Start() {
-	d.eventch = make(chan event)
-	d.stopch = make(chan struct{})
-	d.wg.Add(1)
-	go d.loop()
-	d.cfgsrc.Start()
-}
-
-func (d *Daemon) Stop() {
-	d.cfgsrc.Stop()
+func (d *Daemon) Close() {
+	d.cfgsrc.Close()
 	close(d.stopch)
 	d.wg.Wait()
 	close(d.eventch)
-	d.eventch = nil
-	d.stopch = nil
 }
 
 func (d *Daemon) callback(cfg *config.Config, err error) {

@@ -26,19 +26,17 @@ func NewZooKeeperSource(zkServers, zkPath string) *ZooKeeperSource {
 	if zkServers == "" {
 		zkServers = "127.0.0.1:2181"
 	}
-	return &ZooKeeperSource{
+	zks := &ZooKeeperSource{
 		servers: strings.Split(zkServers, ","),
 		path:    zkPath,
+		stopch:  make(chan struct{}),
 	}
-}
-
-func (zks *ZooKeeperSource) Start() {
-	zks.stopch = make(chan struct{})
 	zks.wg.Add(1)
 	go zks.loop()
+	return zks
 }
 
-func (zks *ZooKeeperSource) Stop() {
+func (zks *ZooKeeperSource) Close() {
 	close(zks.stopch)
 	zks.wg.Wait()
 }

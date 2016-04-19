@@ -1,7 +1,6 @@
 package config
 
 type Source interface {
-	Start()
-	Stop()
+	Close()
 	Watch(func(*Config, error))
 }

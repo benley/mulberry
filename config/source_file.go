@@ -18,16 +18,16 @@ type FileSource struct {
 }
 
 func NewFileSource(path string) *FileSource {
-	return &FileSource{path: path}
-}
-
-func (fs *FileSource) Start() {
-	fs.stopch = make(chan struct{})
+	fs := &FileSource{
+		path:   path,
+		stopch: make(chan struct{}),
+	}
 	fs.wg.Add(1)
 	go fs.loop()
+	return fs
 }
 
-func (fs *FileSource) Stop() {
+func (fs *FileSource) Close() {
 	close(fs.stopch)
 	fs.wg.Wait()
 }
@@ -35,10 +35,10 @@ func (fs *FileSource) Stop() {
 func (fs *FileSource) Watch(callback func(*Config, error)) {
 	fs.mu.Lock()
 	fs.callbacks = append(fs.callbacks, callback)
-	cfg := fs.current
+	current := fs.current
 	fs.mu.Unlock()
-	if cfg != nil {
-		callback(cfg, nil)
+	if current != nil {
+		callback(current, nil)
 	}
 }
 

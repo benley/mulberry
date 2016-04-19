@@ -37,9 +37,11 @@ func main() {
 			log.Fatalf("fatal: missing required flag: -file_path=")
 		}
 		source = config.NewFileSource(*filePathFlag)
+
 	case "zookeeper":
 		signal.Ignore(syscall.SIGHUP)
 		source = config.NewZooKeeperSource(*zkServersFlag, *zkConfigFlag)
+
 	default:
 		log.Fatalf("fatal: unknown flag value: -source=%q", *sourceFlag)
 	}
@@ -52,6 +54,7 @@ func main() {
 	sigch := make(chan os.Signal, 1)
 	signal.Notify(sigch, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigch)
+	defer close(sigch)
 	go (func() {
 		sig := <-sigch
 		log.Printf("info: got signal %v", sig)
@@ -61,13 +64,12 @@ func main() {
 	log.Printf("info: serving on %s", l.Addr())
 	http.Handle("/metrics", prometheus.Handler())
 	d := daemon.New(source)
-	d.Start()
 	if err := http.Serve(l, nil); err != nil {
 		operr, ok := err.(*net.OpError)
 		if !ok || operr.Op != "accept" || operr.Err.Error() != "use of closed network connection" {
 			log.Fatalf("fatal: %v", err)
 		}
 	}
-	d.Stop()
+	d.Close()
 	log.Printf("info: graceful shutdown")
 }
