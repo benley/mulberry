@@ -76,19 +76,24 @@ func (fs *FileSource) send(cfg *Config, err error) {
 }
 
 func parseFile(path string) (*Config, error) {
+	configLoadsTotal.Inc()
 	f, err := os.Open(path)
 	if err != nil {
+		configReadErrorsTotal.Inc()
 		return nil, err
 	}
 	defer f.Close()
 	data, err := ioutil.ReadAll(f)
 	if err != nil {
+		configReadErrorsTotal.Inc()
 		return nil, err
 	}
 	cfg, err := Parse(data)
 	if err != nil {
+		configParseErrorsTotal.Inc()
 		return nil, err
 	}
+	configSuccessesTotal.Inc()
 	return cfg, nil
 }
 

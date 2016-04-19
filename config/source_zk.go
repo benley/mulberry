@@ -108,23 +108,27 @@ GoExist:
 	}
 
 GoGet:
+	configLoadsTotal.Inc()
 	data, _, ch, err := conn.GetW(zks.path)
 	switch err {
 	case nil:
 		i = 0
 	case zk.ErrNoServer, zk.ErrSessionMoved:
+		configReadErrorsTotal.Inc()
 		if !zks.backoff(i) {
 			return
 		}
 		i++
 		goto GoGet
 	case zk.ErrNoNode:
+		configReadErrorsTotal.Inc()
 		if !zks.backoff(i) {
 			return
 		}
 		i++
 		goto GoExist
 	default:
+		configReadErrorsTotal.Inc()
 		zks.send(nil, err)
 		conn.Close()
 		conn = nil
@@ -137,8 +141,10 @@ GoGet:
 
 	cfg, err := Parse(data)
 	zks.send(cfg, err)
-	if err != nil {
-		configErrorsTotal.Inc()
+	if err == nil {
+		configSuccessesTotal.Inc()
+	} else {
+		configParseErrorsTotal.Inc()
 	}
 
 	select {
